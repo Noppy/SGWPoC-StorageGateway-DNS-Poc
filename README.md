@@ -1,0 +1,2 @@
+# StorageGateway-DNS-Poc
+オンプレを想定したDNS構成におけるStorageGatewayの動作検証環境の構築
