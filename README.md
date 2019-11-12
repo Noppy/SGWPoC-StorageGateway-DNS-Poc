@@ -585,10 +585,10 @@ aws --profile ${PROFILE} \
         --tag-specifications "${TAGJSON}";
 ```
 ### (e) DNSテスト
-作成したWindowsClientにRDPでログインし、作成したDNSサーバを利用しでパブリックのDNSサーバに参照できているか確認する。
-(i)WindowsClientにRDPログインする
-(ii) cmdを起動する
-(iii) DNS設定を確認する
+作成したWindowsClientにRDPでログインし、作成したDNSサーバを利用しでパブリックのDNSサーバに参照できているか確認する。<br>
+(i)WindowsClientにRDPログインする<br>
+(ii) cmdを起動する<br>
+(iii) DNS設定を確認する<br>
 DNSサーバに、作成したDNSサーバのIPが設定されていることを確認します。
 ```shell
 ipconfig /all
@@ -613,7 +613,7 @@ Windows IP 構成
    DNS サーバー. . . . . . . . . . . . .: 10.2.64.115
    NetBIOS over TCP/IP . . . . . . . . .: 有効
 ```
-(iv)nslookupによる確認(VPC ProvidedDNSによるVPCEndpointの参照)
+(iv)nslookupによる確認(VPC ProvidedDNSによるVPCEndpointの参照)<br>
 VPCのProvided DNSに明示的に問い合わせを行い、VPCEndpoint(EC2)の名前解決ができることを確認します。
 ```shell
 nslookup ec2.ap-northeast-1.amazonaws.com 10.2.0.2
@@ -625,7 +625,7 @@ Address:  10.2.0.2
 名前:    ec2.ap-northeast-1.amazonaws.com
 Address:  10.2.64.88 <=VPC内のローカルIPが応答されることを確認します。
 ```
-(v)nslookupによる確認(DNSサーバ経由のパブリックなDNSによるVPCEndpointの参照) 
+(v)nslookupによる確認(DNSサーバ経由のパブリックなDNSによるVPCEndpointの参照)<br>
 DNSサーバを利用し、EC2のパブリックエンドポイントの応答があることを確認します。
 ```shell
 nslookup ec2.ap-northeast-1.amazonaws.com
