@@ -201,7 +201,7 @@ aws --profile ${PROFILE} \
         --destination-cidr-block ${ONPRE_VPC_CIDR} \
         --vpc-peering-connection-id ${PeeringID};
 ```
-### (c) VPCEndpointの作成
+### (c) SGW-VPC: VPCEndpointの作成
 ```shell
 #VPC Endpoint用SecurityGroup作成
 VPCENDPOINT_SG_ID=$(aws --profile ${PROFILE} --output text \
@@ -238,6 +238,39 @@ aws --profile ${PROFILE} \
         --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
         --security-group-id ${VPCENDPOINT_SG_ID} ;
 ```
+### (d) On-Prem-VPC: VPCEndpointの作成
+DNSサーバセットアップ後のテスト用にVPCEndpoint(Ec2)を作成
+```shell
+#VPC Endpoint用SecurityGroup作成
+ONPRE_VPCENDPOINT_SG_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-security-group \
+        --group-name OnpremVpcEndpointSG \
+        --description "Allow https" \
+        --vpc-id ${ONPRE_VPCID}) ;
+
+aws --profile ${PROFILE} \
+    ec2 create-tags \
+        --resources ${ONPRE_VPCENDPOINT_SG_ID} \
+        --tags "Key=Name,Value=OnpremVpcEndpointSG" ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${ONPRE_VPCENDPOINT_SG_ID} \
+        --protocol tcp \
+        --port 443 \
+        --cidr 0.0.0.0/0 ;
+
+#On-Prrem-VPC: EC2用VPCEndpoint作成(動作テスト用)
+aws --profile ${PROFILE} \
+    ec2 create-vpc-endpoint \
+        --vpc-id ${ONPRE_VPCID} \
+        --vpc-endpoint-type Interface \
+        --service-name com.amazonaws.${REGION}.ec2 \
+        --subnet-id ${ONPRE_SUBNET1} ${ONREP_SUBNET2} \
+        --security-group-id ${ONPRE_VPCENDPOINT_SG_ID} ;
+
+
+
 ## (3) オンプレDNSサーバ・Windowsサーバ作成
 ### (a) セキュリティーグループ作成(DNS & Bastion)
 (i) SSHログイン用 Security Group
@@ -525,10 +558,9 @@ aws --profile ${PROFILE} \
       --vpc-id ${SGW_VPCID} \
       --dhcp-options-id ${SGW_DHCPSET_ID} ;
 ```
-
-### (d) Windowsサーバ作成
+### (d) Windows Clientサーバ作成
 ```shell
-# WindowsサーバのTAG設定
+# Windows ClientサーバのTAG設定
 TAGJSON='
 [
     {
@@ -541,7 +573,7 @@ TAGJSON='
         ]
     }
 ]'
-# Windowsサーバの起動
+# Windows Clientサーバの起動
 aws --profile ${PROFILE} \
     ec2 run-instances \
         --image-id ${WIN2019_AMIID} \
@@ -552,11 +584,58 @@ aws --profile ${PROFILE} \
         --associate-public-ip-address \
         --tag-specifications "${TAGJSON}";
 ```
+### (e) DNSテスト
+作成したWindowsClientにRDPでログインし、作成したDNSサーバを利用しでパブリックのDNSサーバに参照できているか確認する。
+(i)WindowsClientにRDPログインする
+(ii) cmdを起動する
+(iii) DNS設定を確認する
+DNSサーバに、作成したDNSサーバのIPが設定されていることを確認します。
+```shell
+ipconfig /all
 
+Windows IP 構成
 
+   ホスト名. . . . . . . . . . . . . . .: EC2AMAZ-K8530AL
+   プライマリ DNS サフィックス . . . . .:
+   ノード タイプ . . . . . . . . . . . .: ハイブリッド
+   IP ルーティング有効 . . . . . . . . .: いいえ
+   WINS プロキシ有効 . . . . . . . . . .: いいえ
+   DNS サフィックス検索一覧. . . . . . .: ap-northeast-1.ec2-utilities.amazonaws.com
+                                          us-east-1.ec2-utilities.amazonaws.com
+                                          onprem.internal
 
+イーサネット アダプター イーサネット:
+   <中略>
+   IPv4 アドレス . . . . . . . . . . . .: 10.2.128.209(優先)
 
+   <中略>
 
+   DNS サーバー. . . . . . . . . . . . .: 10.2.64.115
+   NetBIOS over TCP/IP . . . . . . . . .: 有効
+```
+(iv)nslookupによる確認(VPC ProvidedDNSによるVPCEndpointの参照)
+VPCのProvided DNSに明示的に問い合わせを行い、VPCEndpoint(EC2)の名前解決ができることを確認します。
+```shell
+nslookup ec2.ap-northeast-1.amazonaws.com 10.2.0.2
+
+サーバー:  ip-10-2-0-2.ap-northeast-1.compute.internal
+Address:  10.2.0.2
+
+権限のない回答:
+名前:    ec2.ap-northeast-1.amazonaws.com
+Address:  10.2.64.88 <=VPC内のローカルIPが応答されることを確認します。
+```
+(v)nslookupによる確認(DNSサーバ経由のパブリックなDNSによるVPCEndpointの参照) 
+DNSサーバを利用し、EC2のパブリックエンドポイントの応答があることを確認します。
+```shell
+nslookup ec2.ap-northeast-1.amazonaws.com
+サーバー:  UnKnown
+Address:  10.2.64.115
+
+権限のない回答:
+名前:    ec2.ap-northeast-1.amazonaws.com
+Address:  54.239.96.170 <=グローバルIPが応答されることを確認します。
+```
 
 
 
