@@ -2,7 +2,7 @@
 StorageGateway(ファイルゲートウェイ)の検証環境を作成するCloudFormationと手順
 
 # 作成環境
-![CFn_configuration](./Documents/Arch.png)
+![CFn_configuration](./Documents/arch.png)
 
 # 作成手順
 ## (1)事前設定
@@ -136,6 +136,16 @@ ONPRE_ROUTETABLEID=$(aws --profile ${PROFILE} --output text \
         --stack-name SGWPoC-OnPrem-VPC \
         --query 'Stacks[].Outputs[?OutputKey==`RouteTableId`].[OutputValue]')
 
+ONPRE_SUBNET1=$(aws --profile ${PROFILE} --output text \
+    cloudformation describe-stacks \
+        --stack-name SGWPoC-OnPrem-VPC \
+        --query 'Stacks[].Outputs[?OutputKey==`Subnet1Id`].[OutputValue]')
+
+ONPRE_SUBNET2=$(aws --profile ${PROFILE} --output text \
+    cloudformation describe-stacks \
+        --stack-name SGWPoC-OnPrem-VPC \
+        --query 'Stacks[].Outputs[?OutputKey==`Subnet2Id`].[OutputValue]')
+
 SGW_VPCID=$(aws --profile ${PROFILE} --output text \
     cloudformation describe-stacks \
         --stack-name SGWPoC-Sgw-VPC \
@@ -228,8 +238,334 @@ aws --profile ${PROFILE} \
         --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
         --security-group-id ${VPCENDPOINT_SG_ID} ;
 ```
+## (3) オンプレDNSサーバ・Windowsサーバ作成
+### (a) セキュリティーグループ作成(DNS & Bastion)
+(i) SSHログイン用 Security Group
+```shell
+# SSHログイン用セキュリティーグループ作成
+SSH_SG_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-security-group \
+        --group-name SshSG \
+        --description "Allow ssh" \
+        --vpc-id ${ONPRE_VPCID}) ;
 
-## (4) Peering & VPCEndpoint設定
+aws --profile ${PROFILE} \
+    ec2 create-tags \
+        --resources ${SSH_SG_ID} \
+        --tags "Key=Name,Value=SshSG" ;
+
+# セキュリティーグループにSSHのinboundアクセス許可を追加
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SSH_SG_ID} \
+        --protocol tcp \
+        --port 22 \
+        --cidr 0.0.0.0/0 ;
+```
+(ii) RDPログイン用 Security Group
+```shell
+# RDPログイン用セキュリティーグループ作成
+RDP_SG_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-security-group \
+        --group-name RdpSG \
+        --description "Allow rdp" \
+        --vpc-id ${ONPRE_VPCID}) ;
+
+aws --profile ${PROFILE} \
+    ec2 create-tags \
+        --resources ${RDP_SG_ID} \
+        --tags "Key=Name,Value=RdpSG" ;
+
+# セキュリティーグループにRDPのinboundアクセス許可を追加
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${RDP_SG_ID} \
+        --protocol tcp \
+        --port 3389 \
+        --cidr 0.0.0.0/0 ;
+```
+(iii) DNS用 Security Group
+```shell
+# DNS用セキュリティーグループ作成
+DNS_SG_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-security-group \
+        --group-name DnsSG \
+        --description "Allow Dns" \
+        --vpc-id ${ONPRE_VPCID}) ;
+
+aws --profile ${PROFILE} \
+    ec2 create-tags \
+        --resources ${DNS_SG_ID} \
+        --tags "Key=Name,Value=DnsSG" ;
+
+# セキュリティーグループにDnsのinboundアクセス許可を追加
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${DNS_SG_ID} \
+        --protocol tcp \
+        --port 53 \
+        --cidr ${ONPRE_VPC_CIDR} ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${DNS_SG_ID} \
+        --protocol tcp \
+        --port 53 \
+        --cidr ${SGW_VPC_CIDR} ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${DNS_SG_ID} \
+        --protocol udp \
+        --port 53 \
+        --cidr ${ONPRE_VPC_CIDR} ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${DNS_SG_ID} \
+        --protocol udp \
+        --port 53 \
+        --cidr ${SGW_VPC_CIDR} ;
+```
+### (b)インスタンス作成用の事前情報取得
+```shell
+KEYNAME="CHANGE_KEY_PAIR_NAME"  #環境に合わせてキーペア名を設定してください。  
+
+#最新のAmazon Linux2のAMI IDを取得します。
+AL2_AMIID=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-images \
+        --owners amazon \
+        --filters 'Name=name,Values=amzn2-ami-hvm-2.0.????????.?-x86_64-gp2' \
+                  'Name=state,Values=available' \
+        --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' ) ;
+
+WIN2019_AMIID=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-images \
+        --owners amazon \
+        --filters 'Name=name,Values=Windows_Server-2019-Japanese-Full-Base-????.??.??' \
+                  'Name=state,Values=available' \
+        --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' ) ;
+
+```
+### (b) DNSサーバ構築
+```shell
+TAGJSON='
+[
+    {
+        "ResourceType": "instance",
+        "Tags": [
+            {
+                "Key": "Name",
+                "Value": "Dns"
+            }
+        ]
+    }
+]'
+
+USER_DATA='
+#!/bin/bash -xe
+                
+yum -y update
+yum -y install bind bind-utils
+hostnamectl set-hostname dns
+
+LOCAL_IP=$(curl http://169.254.169.254/latest/meta-data/local-ipv4)
+
+cat > /etc/named.conf << EOL
+# アクセス制御。trustというグループに属するIPアドレスを定義する。
+acl "trust" {
+        10.1.0.0/16;
+        10.2.0.0/16;
+        127.0.0.1;
+};
+
+options {
+        # UDP53でDNSクエリを受け付ける自分自身のIPアドレス
+        listen-on port 53 {
+                127.0.0.1;
+                ${LOCAL_IP};
+        };
+        # IPv6は使わないのでnone
+        listen-on-v6 port 53 { none; };
+        directory       "/var/named";
+        dump-file       "/var/named/data/cache_dump.db";
+        statistics-file "/var/named/data/named_stats.txt";
+        memstatistics-file "/var/named/data/named_mem_stats.txt";
+
+        # DNSクエリはaclで設定した送信元のみ許可
+        allow-query     { trust; };
+        allow-query-cache { trust; };
+
+        # 再帰問い合わせもaclで問い合わせした送信元のみ許可
+        recursion yes;
+        allow-recursion { trust; };
+
+        # DNS問い合わせの転送先
+        # Google Public DNSを利用します。
+        forwarders { 8.8.8.8; 8.8.4.4; };
+        # 問い合わせの転送に失敗した場合は自分自身で名前解決を行う
+        # 問い合わせ転送に失敗した際名前解決をあきらめる場合はonlyを設定する
+        forward first;
+
+        dnssec-enable yes;
+        dnssec-validation yes;
+
+        bindkeys-file "/etc/named.iscdlv.key";
+
+        managed-keys-directory "/var/named/dynamic";
+
+        pid-file "/run/named/named.pid";
+        session-keyfile "/run/named/session.key";
+};
+
+logging {
+        channel default_debug {
+                file "data/named.run";
+                severity dynamic;
+        };
+        # DNSクエリログ用の出力設定
+        channel query-log {
+                # 以下すべてのチャネルで3世代10Mごとにログローテーションを行う
+                file "/var/log/named/query.log" versions 3 size 10M;
+                severity  info;
+                print-category yes;
+                print-severity yes;
+                print-time yes;
+        };
+        # ゾーン転送ログ用の出力設定
+        channel xfer-log {
+                file "/var/log/named/xfer.log" versions 3 size 10M;
+                severity  info;
+                print-category yes;
+                print-severity yes;
+                print-time yes;
+        };
+        # 上記以外の種類のエラーログ用の出力設定
+        channel error-log {
+                file "/var/log/named/error.log" versions 3 size 10M;
+                severity  error;
+                print-category yes;
+                print-severity yes;
+                print-time yes;
+        };
+ 
+        # ログ種別ごとの出力先設定指定
+        category queries { query-log; };
+        category xfer-in { xfer-log; };
+        category xfer-out { xfer-log; };
+        category default { error-log; };
+};
+
+zone "." IN {
+        type hint;
+        file "named.ca";
+};
+
+include "/etc/named.rfc1912.zones";
+include "/etc/named.root.key";
+EOL
+
+#ログ用フォルダの作成
+mkdir /var/log/named
+chown -R named:named /var/log/named/
+
+# Bindの起動
+systemctl enable named
+systemctl start named
+'
+# DNSサーバの起動
+aws --profile ${PROFILE} \
+    ec2 run-instances \
+        --image-id ${AL2_AMIID} \
+        --instance-type t2.micro \
+        --key-name ${KEYNAME} \
+        --subnet-id ${ONPRE_SUBNET1} \
+        --security-group-ids ${SSH_SG_ID} ${DNS_SG_ID}\
+        --associate-public-ip-address \
+        --tag-specifications "${TAGJSON}" \
+        --user-data "${USER_DATA}" ;
+```
+### (c) VPC DHCPオプションセットの変更
+作成したDNSサーバを利用する用にDHCPオプションセットを変更します。
+```shell
+#DNSサーバのローカルIP取得
+DnsLocalIP=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-instances \
+        --filter "Name=tag:Name,Values=Dns" "Name=instance-state-name,Values=running"  \
+    --query 'Reservations[].Instances[].PrivateIpAddress' \
+)
+
+#On-Prem VPC: DHCPオプションセット作成
+ONPRE_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-dhcp-options \
+        --dhcp-configurations \
+            "Key=domain-name,Values=onprem.internal" \
+            "Key=domain-name-servers,Values=${DnsLocalIP}" \
+            "Key=ntp-servers,Values=169.254.169.123" \
+    --query 'DhcpOptions.DhcpOptionsId'; )
+
+#SGW VPC: DHCPオプションセット関連付け
+aws --profile ${PROFILE} \
+    ec2 associate-dhcp-options \
+      --vpc-id ${ONPRE_VPCID} \
+      --dhcp-options-id ${ONPRE_DHCPSET_ID} ;
+      
+#SGW VPC: DHCPオプションセット作成
+SGW_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-dhcp-options \
+        --dhcp-configurations \
+            "Key=domain-name,Values=sgw.internal" \
+            "Key=domain-name-servers,Values=${DnsLocalIP}" \
+            "Key=ntp-servers,Values=169.254.169.123" \
+    --query 'DhcpOptions.DhcpOptionsId'; )
+
+#SGW VPC: DHCPオプションセット関連付け
+aws --profile ${PROFILE} \
+    ec2 associate-dhcp-options \
+      --vpc-id ${SGW_VPCID} \
+      --dhcp-options-id ${SGW_DHCPSET_ID} ;
+```
+
+### (d) Windowsサーバ作成
+```shell
+# WindowsサーバのTAG設定
+TAGJSON='
+[
+    {
+        "ResourceType": "instance",
+        "Tags": [
+            {
+                "Key": "Name",
+                "Value": "WindowsClient"
+            }
+        ]
+    }
+]'
+# Windowsサーバの起動
+aws --profile ${PROFILE} \
+    ec2 run-instances \
+        --image-id ${WIN2019_AMIID} \
+        --instance-type t2.2xlarge \
+        --key-name ${KEYNAME} \
+        --subnet-id ${ONPRE_SUBNET2} \
+        --security-group-ids ${RDP_SG_ID}\
+        --associate-public-ip-address \
+        --tag-specifications "${TAGJSON}";
+```
+
+
+
+
+
+
+
+
+## (3) オンプレDNSサーバ・Windowsサーバ作成
+
+
+
+
+
 
 
 
