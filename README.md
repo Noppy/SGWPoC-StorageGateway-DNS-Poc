@@ -238,6 +238,7 @@ aws --profile ${PROFILE} \
         --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
         --security-group-id ${VPCENDPOINT_SG_ID} ;
 ```
+
 ### (d) On-Prem-VPC: VPCEndpointの作成
 DNSサーバセットアップ後のテスト用にVPCEndpoint(Ec2)を作成
 ```shell
@@ -268,8 +269,7 @@ aws --profile ${PROFILE} \
         --service-name com.amazonaws.${REGION}.ec2 \
         --subnet-id ${ONPRE_SUBNET1} ${ONREP_SUBNET2} \
         --security-group-id ${ONPRE_VPCENDPOINT_SG_ID} ;
-
-
+```
 
 ## (3) オンプレDNSサーバ・Windowsサーバ作成
 ### (a) セキュリティーグループ作成(DNS & Bastion)
