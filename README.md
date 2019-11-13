@@ -593,6 +593,7 @@ DnsLocalIP=$(aws --profile ${PROFILE} --output text \
         --filter "Name=tag:Name,Values=Dns" "Name=instance-state-name,Values=running"  \
     --query 'Reservations[].Instances[].PrivateIpAddress' \
 )
+echo ${DnsLocalIP}
 
 #On-Prem VPC: DHCPオプションセット作成
 ONPRE_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
@@ -602,6 +603,12 @@ ONPRE_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
             "Key=domain-name-servers,Values=${DnsLocalIP}" \
             "Key=ntp-servers,Values=169.254.169.123" \
     --query 'DhcpOptions.DhcpOptionsId'; )
+
+#On-Prem VPC: DHCPオプションセット関連付け
+aws --profile ${PROFILE} \
+    ec2 associate-dhcp-options \
+      --vpc-id ${ONPRE_VPCID} \
+      --dhcp-options-id ${ONPRE_DHCPSET_ID} ;
 ```
 ### (4)-(e) Windows Clientサーバ作成
 ```shell
