@@ -891,7 +891,7 @@ FGW_AMIID=$(aws --profile ${PROFILE} --output text \
         --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' );
 
 #Security Group ID取得
-GW_SG_ID=$(aws --profile ${PROFILE} --output text \
+SGW_SG_ID=$(aws --profile ${PROFILE} --output text \
         ec2 describe-security-groups \
                 --filter 'Name=group-name,Values=SGWSG' \
         --query 'SecurityGroups[].GroupId');
@@ -972,8 +972,8 @@ echo ${ACTIVATION_URL}
 https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/gateway-private-link.html#GettingStartedActivateGateway-file-vpc
 
 (ii)アクティベーションキーの取得<br>
-WindowsClientのIEなどから、生成したURLでアクティベーションキーを取得します。
-### (5)-(g) ゲートウェイのアクティベーション
+DNSサーバ上から、生成したURLでアクティベーションキーを取得します。(WindowsClientのIEでは上手くアクティベーションできなかったため。理由不明)
+### (6)-(c) ゲートウェイのアクティベーション
 ファイルゲートウェイをアクティベーションします。
 ```shell
 ACTIVATION_KEY=<取得したアクティベーションキーを入力>
@@ -988,12 +988,9 @@ aws --profile ${PROFILE} \
 
 #作成したGatewayのARN取得
 # atewayState"が "RUNNING"になるまで待つ
-aws storagegateway list-gateways
-
-#アクティベートしたゲートウェイの構成情報確認
-GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ match($0, /arn:aws:storagegateway:\S*/); print substr($0, RSTART, RLENGTH) }')
-aws storagegateway describe-gateway-information --gateway-arn ${GATEWAY_ARN}
-
+#ARNがわからない場合は、下記コマンドで確認
+#aws --profile ${PROFILE} storagegateway list-gateways
+aws --profile ${PROFILE} storagegateway describe-gateway-information --gateway-arn <GATEWAYのARN>
 ```
 ＜参考 gateway-typeの説明>
 - "STORED" : VolumeGateway(Store type)
@@ -1001,35 +998,107 @@ aws storagegateway describe-gateway-information --gateway-arn ${GATEWAY_ARN}
 - "VTL"    : VirtualTapeLibrary
 - "FILE_S3": File Gateway
 
-### (6)-(c) ローカルディスク設定
+### (6)-(d) ローカルディスク設定
 ```shell
 #ローカルストレージの確認
-GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ match($0, /arn:aws:storagegateway:\S*/); print substr($0, RSTART, RLENGTH) }')
-DiskIds=$(aws --output text storagegateway list-local-disks --gateway-arn ${GATEWAY_ARN} --query 'Disks[*].DiskId'| sed -e 's/\n/ /')
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
+DiskIds=$(aws --profile ${PROFILE} --output text storagegateway list-local-disks --gateway-arn ${GATEWAY_ARN} --query 'Disks[*].DiskId'| sed -e 's/\n/ /')
 echo ${DiskIds}
 
 #ローカルストレージの割り当て
-aws storagegateway add-cache \
-    --gateway-arn ${GATEWAY_ARN} \
-    --disk-ids ${DiskIds}
+aws --profile ${PROFILE} storagegateway \
+    add-cache \
+        --gateway-arn ${GATEWAY_ARN} \
+        --disk-ids ${DiskIds}
 
 #ローカルストレージの確認
 # "DiskAllocationType"が"CACHE STORAGE"で、"DiskStatus"が"present"であることを確認
-aws --output text storagegateway list-local-disks --gateway-arn ${GATEWAY_ARN}
+aws --profile ${PROFILE} --output text \
+    storagegateway list-local-disks \
+        --gateway-arn ${GATEWAY_ARN}
 ```
 参照：https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/create-gateway-file.html
 
+### (6)-(e) SMB設定(SMBSecurityStrategy)
+```shell
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
 
+aws --profile ${PROFILE} storagegateway \
+    update-smb-security-strategy \
+        --gateway-arn ${GATEWAY_ARN} \
+        --smb-security-strategy MandatoryEncryption
+```
+### (6)-(f) ゲストアクセス用の SMB ファイル共有を設定
+```shell
+PASSWORD="HogeHoge@"
+aws --profile ${PROFILE} storagegateway \
+    set-smb-guest-password \
+        --gateway-arn ${GATEWAY_ARN} \
+        --password ${PASSWORD}
+```
+### (6)-(g) SMBファイル共有
+```shell
+#情報取得
+BUCKETARN="arn:aws:s3:::${BUCKET_NAME}" #${BUCKET_NAME}は、バケット作成時に設定した変数
+ROLE="StorageGateway-S3AccessRole"
+ROLEARN=$(aws --profile  ${PROFILE} --output text \
+    iam get-role \
+        --role-name "StorageGateway-S3AccessRole" \
+    --query 'Role.Arn')
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
+CLIENT_TOKEN=$(cat /dev/urandom | base64 | fold -w 38 | sed -e 's/[\/\+\=]/0/g' | head -n 1)
+echo -e "BUCKET=${BUCKETARN}\nROLE_ARN=${ROLEARN}\nGATEWAY_ARN=${GATEWAY_ARN}\nCLIENT_TOKEN=${CLIENT_TOKEN}"
 
+#実行
+aws --profile ${PROFILE} storagegateway \
+    create-smb-file-share \
+        --client-token ${CLIENT_TOKEN} \
+        --gateway-arn "${GATEWAY_ARN}" \
+        --location-arn "${BUCKETARN}" \
+        --role "${ROLEARN}" \
+        --object-acl bucket-owner-full-control \
+        --default-storage-class S3_STANDARD \
+        --guess-mime-type-enabled \
+        --authentication GuestAccess
+```
+### (7)ファイルゲートウェイクリーニング
+```shell
+#共有ファイル削除
+#aws --profile ${PROFILE} storagegateway list-file-shares で確認し設定
+FILE_SHARE_ID="arn:aws:storagegateway:ap-northeast-1:664154733615:share/share-4B43E429"
+aws --profile ${PROFILE} storagegateway \
+    delete-file-share \
+        --file-share-arn ${FILE_SHARE_ID};
 
+#ゲートウェイ削除
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
 
+aws --profile ${PROFILE} storagegateway \
+    delete-gateway \
+        --gateway-arn ${GATEWAY_ARN};
 
+#EC2インスタンス削除
+#構成情報取得
+GATEWAY_INSTANCE_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-instances  \
+        --filters "Name=tag:Name,Values=Fgw" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[*].Instances[*].InstanceId' )
 
+aws --profile ${PROFILE} ec2 \
+    terminate-instances \
+        --instance-ids ${GATEWAY_INSTANCE_ID};
+```
+### (8) 個別DNS環境でのテスト - 事前準備(DHCP変更)
+テスト実施で、Internetへ参照する個別DNSサーバを利用した環境で稼働するゲートウェイをアクティベーションして利用可能か確認する。
 
-
-
-
-
+```shell
+#DNSサーバのローカルIP取得
+DnsLocalIP=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-instances \
+        --filter "Name=tag:Name,Values=Dns" "Name=instance-state-name,Values=running"  \
+    --query 'Reservations[].Instances[].PrivateIpAddress' \
+)
+echo ${DnsLocalIP}
 
 #SGW VPC: DHCPオプションセット関連付け
 aws --profile ${PROFILE} \
@@ -1051,149 +1120,198 @@ aws --profile ${PROFILE} \
     ec2 associate-dhcp-options \
       --vpc-id ${SGW_VPCID} \
       --dhcp-options-id ${SGW_DHCPSET_ID} ;
-
-
-
-
-
-
-### (3)-（d) ローカルディスク設定
-ゲートウェイのローカルディスクが割り当てられます。ここでは、これらのディスクを使用するようにゲートウェイを設定します。
+```
+### (8) 個別DNS環境でのテスト - 実テスト
+### (8)-(a) ファイルゲートウェイ・インスタンスの作成
 ```shell
+KEYNAME="CHANGE_KEY_PAIR_NAME"  #環境に合わせてキーペア名を設定してください。
+# FileGatewayの最新のAMIIDを取得する
+FGW_AMIID=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-images \
+        --owners amazon \
+        --filters 'Name=name,Values=aws-thinstaller-??????????' \
+                  'Name=state,Values=available' \
+        --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' );
+
+#Security Group ID取得
+SGW_SG_ID=$(aws --profile ${PROFILE} --output text \
+        ec2 describe-security-groups \
+                --filter 'Name=group-name,Values=SGWSG' \
+        --query 'SecurityGroups[].GroupId');
 
 
+#ファイルゲートウェイインスタンスの起動
+INSTANCE_TYPE=c4.4xlarge
+TAGJSON='
+[
+    {
+        "ResourceType": "instance",
+        "Tags": [
+            {
+                "Key": "Name",
+                "Value": "Fgw"
+            }
+        ]
+    }
+]'
+BLOCK_DEVICE_MAPPINGS='[
+    {
+        "DeviceName": "/dev/xvda",
+        "Ebs": {
+            "DeleteOnTermination": true,
+            "VolumeType": "io1",
+            "Iops": 4000,
+            "VolumeSize": 350,
+            "Encrypted": false
+        }
+    },
+    {
+        "DeviceName": "/dev/sdm",
+        "Ebs": {
+            "DeleteOnTermination": true,
+            "VolumeType": "io1",
+            "Iops": 1500,
+            "VolumeSize": 1024,
+            "Encrypted": false
+        }
+    }
+]'
 
-### (3)-(e) CloudWatchログ設定
-```shell
-GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ match($0, /arn:aws:storagegateway:\S*/); print substr($0, RSTART, RLENGTH) }')
-Region=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed -e 's/.$//')
-AccuntId=$(curl -s http://169.254.169.254/latest/meta-data/identity-credentials/ec2/info|awk '/AccountId/{ i=gsub( /"/, "", $3); print $3}')
-echo "GATEWAY_ARN=$GATEWAY_ARN  Region=${Region} AccuntId=${AccuntId}"
-
-aws storagegateway update-gateway-information \
-    --gateway-arn ${GATEWAY_ARN} \
-    --cloud-watch-log-group-arn "arn:aws:logs:${Region}:${AccuntId}:log-group:StorageGW-Gateway-1"
+aws --profile ${PROFILE} \
+    ec2 run-instances \
+        --image-id ${FGW_AMIID} \
+        --instance-type ${INSTANCE_TYPE} \
+        --iam-instance-profile Name="Ec2-ForStorageGWProfile" \
+        --key-name ${KEYNAME} \
+        --subnet-id ${SGW_SUBNET1} \
+        --security-group-ids ${SGW_SG_ID} \
+        --block-device-mappings "${BLOCK_DEVICE_MAPPINGS}" \
+        --tag-specifications "${TAGJSON}" \
+        --monitoring Enabled=true;
 ```
 
-### (3)-(e) TimeServer問題の回避策(Private Hosted-zoneを利用した対策)
-別途作成
+ここから
 
-### (3)-(f) CloudWatch AlarmによるS3へのFileBackd完了通知設定
-別途作成
 
-## (４) ファイル共有の作成
-とりあえず、「ゲストアクセスによる SMB ファイル共有」で簡易確認
-
-参照:
-- https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/GettingStartedCreateFileShare.html
-- https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/CreatingAnSMBFileShare.html
-
-### (4)-(a) SMB設定(SMBSecurityStrategy)
+### (8)-(b) アクティベーションキーの取得
+ファイルゲートウェイから、 アクティベーションキーを取得します。
+(i)アクティベーション用のURL作成
 ```shell
-GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{print $4}')
+#構成情報取得
+GatewayIP=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-instances  \
+        --filters "Name=tag:Name,Values=Fgw" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[*].Instances[*].PrivateIpAddress' )
+REGION=$(aws --profile ${PROFILE} configure get region)
+VPCEndpointDNSname=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-vpc-endpoints \
+        --filters \
+            "Name=service-name,Values=com.amazonaws.ap-northeast-1.storagegateway" \
+            "Name=vpc-id,Values=${SGW_VPCID}" \
+    --query 'VpcEndpoints[*].DnsEntries[0].DnsName' );
+echo ${GatewayIP} ${REGION} ${VPCEndpointDNSname}
 
-aws storagegateway update-smb-security-strategy \
-    --gateway-arn ${GATEWAY_ARN} \
-    --smb-security-strategy MandatoryEncryption
-```
-### (4)-(b) ゲストアクセス用の SMB ファイル共有を設定
-```shell
-PASSWORD="HogeHoge@"
-aws storagegateway set-smb-guest-password \
-    --gateway-arn ${GATEWAY_ARN} \
-    --password ${PASSWORD}
-```
-### (4)-(c) SMBファイル共有
-```shell
-#情報取得
-BUCKETARN=$(aws --output text cloudformation describe-stacks --stack-name SgPoC-S3 --query 'Stacks[*].Outputs[*].[OutputKey,OutputValue]' | awk -e '/StorageGatewayStoredS3BucketArn/{print $2}')
-ROLE=$(aws --output text cloudformation describe-stacks --stack-name SgPoC-Iam --query 'Stacks[*].Outputs[*].[OutputKey,OutputValue]' |awk -e '/StorageGatewayBucketAccessRoleArn/{print $2}')
-GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{print $4}')
-CLIENT_TOKEN=$(cat /dev/urandom | base64 | fold -w 38 | sed -e 's/[\/\+\=]/0/g' | head -n 1)
-echo -e "BUCKET=${BUCKETARN}\nROLE=${ROLE}\nGATEWAY_ARN=${GATEWAY_ARN}\nCLIENT_TOKEN=${CLIENT_TOKEN}"
-
-#実行
-aws storagegateway create-smb-file-share \
-    --client-token ${CLIENT_TOKEN} \
-    --gateway-arn "${GATEWAY_ARN}" \
-    --location-arn "${BUCKETARN}" \
-    --role "${ROLE}" \
-    --object-acl bucket-owner-full-control \
-    --default-storage-class S3_STANDARD \
-    --guess-mime-type-enabled \
-    --authentication GuestAccess
-```
-## (5) クライアントからのマウントテスト
-```shell
-rem 共有接続と切断(ドライブレター割り当て)
-net use E: \\＜GatewayのIP>\＜S３バケット名と同一> /user:<Gateway名称>\smbguest
-net use
-net use E: /delete
-
-rem 共有接続と切断(UNC、IPアドレスでの接続)
-net use \\＜GatewayのIP>\＜S３バケット名と同一> /user:<Gateway名称>\smbguest
-net use
-net use \\＜GatewayのIP>\＜S３バケット名と同一> /delete
-
-
-rem 共有接続と切断(UNC、FQDNでの接続)
-net use \\＜GatewayのFQDN＞\＜S３バケット名と同一> /user:<Gateway名称>\smbguest
-net use
-net use \\＜GatewayのFQDN＞\＜S３バケット名と同一> /delete
-```
-## (6)Managerインスタンスからのsshメンテナンスログテインテスト
-ManagerインスタンスにSystem Managerでログインする
-```shell
-sudo -u ec2-user -i
-# キーペアの秘密鍵設定
-cat > ~/.ssh/id_rsa
-<キーペアの秘密鍵を入力し、"ctr＋d"で終了>
-chmod 600 ~/.ssh/id_rsa
-
-#ゲートウェイのIP取得
-Gateway1DNS=$(aws --output text ec2 describe-instances --query 'Reservations[*].Instances[*].PrivateIpAddress' --filters "Name=tag:Name,Values=SgPoC-Gateway-1" "Name=instance-state-name,Values=running")
-
-#sshログイン
-ssh admin@${Gateway1DNS}
-```
-Storage Gatewayのローカルコンソール
-```
-        AWS Storage Gateway - Configuration
-
-        #######################################################################
-        ##  Currently connected network adapters:
-        ##
-        ##  eth0: 10.1.167.130
-        #######################################################################
-
-        1: Configure HTTP Proxy
-        2: Network Configuration
-        3: Test Network Connectivity
-        4: View System Resource Check (0 Errors)
-        5: Command Prompt
-
-        Press "x" to exit session
-
-        Enter command:
+#アクティベーション先のURL生成
+ACTIVATION_URL="http://${GatewayIP}/?gatewayType=FILE_S3&activationRegion=${REGION}&vpcEndpoint=${VPCEndpointDNSname}&no_redirect"
+echo ${ACTIVATION_URL}
 ```
 参考
-https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/ec2-local-console-fwg.html#EC2_MaintenanceGatewayConsole-fgw
+https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/gateway-private-link.html#GettingStartedActivateGateway-file-vpc
 
-
-
-## (7) ファイルゲートウェイのリフレッシュ
-
+(ii)アクティベーションキーの取得<br>
+DNSサーバ上から、生成したURLでアクティベーションキーを取得します。(WindowsClientのIEでは上手くアクティベーションできなかったため。理由不明)
+### (6)-(c) ゲートウェイのアクティベーション
+ファイルゲートウェイをアクティベーションします。
 ```shell
+ACTIVATION_KEY=<取得したアクティベーションキーを入力>
+REGION=$(aws --profile ${PROFILE} configure get region)
+aws --profile ${PROFILE} \
+    storagegateway activate-gateway \
+        --activation-key ${ACTIVATION_KEY} \
+        --gateway-name SgPoC-Gateway-1 \
+        --gateway-timezone "GMT+9:00" \
+        --gateway-region ${REGION} \
+        --gateway-type FILE_S3
 
-#FileShareARNの確認
-GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{print $4}')
-aws storagegateway list-file-shares --gateway-arn ${GATEWAY_ARN}
-
-FILE_SHARE_ARN="上記結果より対象となるファイル共有のARNを設定"
-FOLDER_LIST="/ "    #設定例"/ /xxxx/ /yyyy/zzz/"。デフォルトは、”/"
-
-# リフレッシュ実行
-aws storagegateway refresh-cache \
-    --file-share-arn ${FILE_SHARE_ARN} \
-    --folder-list ${FOLDER_LIST}
+#作成したGatewayのARN取得
+# atewayState"が "RUNNING"になるまで待つ
+#ARNがわからない場合は、下記コマンドで確認
+#aws --profile ${PROFILE} storagegateway list-gateways
+aws --profile ${PROFILE} storagegateway describe-gateway-information --gateway-arn <GATEWAYのARN>
 ```
+＜参考 gateway-typeの説明>
+- "STORED" : VolumeGateway(Store type)
+- "CACHED" : VolumeGateway(Cache tyep)
+- "VTL"    : VirtualTapeLibrary
+- "FILE_S3": File Gateway
+
+### (6)-(d) ローカルディスク設定
+```shell
+#ローカルストレージの確認
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
+DiskIds=$(aws --profile ${PROFILE} --output text storagegateway list-local-disks --gateway-arn ${GATEWAY_ARN} --query 'Disks[*].DiskId'| sed -e 's/\n/ /')
+echo ${DiskIds}
+
+#ローカルストレージの割り当て
+aws --profile ${PROFILE} storagegateway \
+    add-cache \
+        --gateway-arn ${GATEWAY_ARN} \
+        --disk-ids ${DiskIds}
+
+#ローカルストレージの確認
+# "DiskAllocationType"が"CACHE STORAGE"で、"DiskStatus"が"present"であることを確認
+aws --profile ${PROFILE} --output text \
+    storagegateway list-local-disks \
+        --gateway-arn ${GATEWAY_ARN}
+```
+参照：https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/create-gateway-file.html
+
+### (6)-(e) SMB設定(SMBSecurityStrategy)
+```shell
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
+
+aws --profile ${PROFILE} storagegateway \
+    update-smb-security-strategy \
+        --gateway-arn ${GATEWAY_ARN} \
+        --smb-security-strategy MandatoryEncryption
+```
+### (6)-(f) ゲストアクセス用の SMB ファイル共有を設定
+```shell
+PASSWORD="HogeHoge@"
+aws --profile ${PROFILE} storagegateway \
+    set-smb-guest-password \
+        --gateway-arn ${GATEWAY_ARN} \
+        --password ${PASSWORD}
+```
+### (6)-(g) SMBファイル共有
+```shell
+#情報取得
+BUCKETARN="arn:aws:s3:::${BUCKET_NAME}" #${BUCKET_NAME}は、バケット作成時に設定した変数
+ROLE="StorageGateway-S3AccessRole"
+ROLEARN=$(aws --profile  ${PROFILE} --output text \
+    iam get-role \
+        --role-name "StorageGateway-S3AccessRole" \
+    --query 'Role.Arn')
+GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
+CLIENT_TOKEN=$(cat /dev/urandom | base64 | fold -w 38 | sed -e 's/[\/\+\=]/0/g' | head -n 1)
+echo -e "BUCKET=${BUCKETARN}\nROLE_ARN=${ROLEARN}\nGATEWAY_ARN=${GATEWAY_ARN}\nCLIENT_TOKEN=${CLIENT_TOKEN}"
+
+#実行
+aws --profile ${PROFILE} storagegateway \
+    create-smb-file-share \
+        --client-token ${CLIENT_TOKEN} \
+        --gateway-arn "${GATEWAY_ARN}" \
+        --location-arn "${BUCKETARN}" \
+        --role "${ROLEARN}" \
+        --object-acl bucket-owner-full-control \
+        --default-storage-class S3_STANDARD \
+        --guess-mime-type-enabled \
+        --authentication GuestAccess
+```
+
+
+
+
+
+
+
