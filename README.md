@@ -6,11 +6,11 @@ StorageGateway(ファイルゲートウェイ)の検証環境を作成するClou
 
 # 作成手順
 ## (1)事前設定
-### (a) 作業環境の準備
+### (1)-(a) 作業環境の準備
 下記を準備します。
 * aws-cliのセットアップ
 * AdministratorAccessポリシーが付与され実行可能な、aws-cliのProfileの設定
-### (b) CLI実行用の事前準備
+### (1)-(b) CLI実行用の事前準備
 これ以降のAWS-CLIで共通で利用するパラメータを環境変数で設定しておきます。
 ```shell
 export PROFILE=<設定したプロファイル名称を指定。デフォルトの場合はdefaultを設定>
@@ -18,12 +18,12 @@ export REGION=ap-northeast-1
 ```
 ## (2)VPCの作成(CloudFormation利用)
 IGWでインターネットアクセス可能で、パブリックアクセス可能なサブネットx3、プライベートなサブネットx3の合計6つのサブネットを所有するVPCを作成します。
-### (a)テンプレートのダウンロード
+### (2)-(a)テンプレートのダウンロード
 私が作成し利用しているVPC作成用のCloudFormationテンプレートを利用します。まず、githubからテンプレートをダウンロードします。
 ```shell
 curl -o vpc-2subnets.yaml https://raw.githubusercontent.com/Noppy/CfnCreatingVPC/master/vpc-2subnets.yaml
 ```
-### (b)CloudFormationによるOn-Prem VPC作成
+### (2)-(b)CloudFormationによるOn-Prem VPC作成
 ダウンロードしたテンプレートを利用し、VPCをデプロイします。
 ```shell
 CFN_STACK_PARAMETERS='
@@ -68,7 +68,7 @@ aws --profile ${PROFILE} cloudformation create-stack \
     --parameters "${CFN_STACK_PARAMETERS}" \
     --capabilities CAPABILITY_IAM ;
 ```
-### (c)CloudFormationによるSGW-VPC作成
+### (2)-(c)CloudFormationによるSGW-VPC作成
 ダウンロードしたテンプレートを利用し、VPCをデプロイします。
 ```shell
 CFN_STACK_PARAMETERS='
@@ -118,7 +118,7 @@ aws --profile ${PROFILE} cloudformation create-stack \
     --capabilities CAPABILITY_IAM ;
 ```
 ## (3) Peering & VPCEndpoint設定
-### (a) 構成情報取得
+### (3)-(a) 構成情報取得
 ```shell
 #構成情報取得
 ONPRE_VPCID=$(aws --profile ${PROFILE} --output text \
@@ -173,7 +173,7 @@ SGW_SUBNET2=$(aws --profile ${PROFILE} --output text \
 
 echo $ONPRE_VPCID $ONPRE_VPC_CIDR $ONPRE_ROUTETABLEID $SGW_VPCID $SGW_VPC_CIDR $SGW_ROUTETABLEID $SGW_SUBNET1 $SGW_SUBNET2
 ```
-### (b) VPCのPeering接続とルーティング設定
+### (3)-(b) VPCのPeering接続とルーティング設定
 ```shell
 #Peering作成
 PeeringID=$(aws --profile ${PROFILE} --output text \
@@ -201,7 +201,7 @@ aws --profile ${PROFILE} \
         --destination-cidr-block ${ONPRE_VPC_CIDR} \
         --vpc-peering-connection-id ${PeeringID};
 ```
-### (c) SGW-VPC: VPCEndpointの作成
+### (3)-(c) SGW-VPC: VPCEndpointの作成
 ```shell
 #VPC Endpoint用SecurityGroup作成
 VPCENDPOINT_SG_ID=$(aws --profile ${PROFILE} --output text \
@@ -220,7 +220,48 @@ aws --profile ${PROFILE} \
         --group-id ${VPCENDPOINT_SG_ID} \
         --protocol tcp \
         --port 443 \
-        --cidr 0.0.0.0/0 ;
+        --cidr ${SGW_VPC_CIDR} ;
+
+#Storage Gateway専用のSecurityGroup作成
+VPCENDPOINT_STORAGEGW_SG_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-security-group \
+        --group-name SGW-VpcEndpointSG \
+        --description "Allow https" \
+        --vpc-id ${SGW_VPCID}) ;
+
+aws --profile ${PROFILE} \
+    ec2 create-tags \
+        --resources ${VPCENDPOINT_STORAGEGW_SG_ID} \
+        --tags "Key=Name,Value=SGW-VpcEndpointSG" ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${VPCENDPOINT_STORAGEGW_SG_ID} \
+        --protocol tcp \
+        --port 443 \
+        --cidr ${SGW_VPC_CIDR} ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${VPCENDPOINT_STORAGEGW_SG_ID} \
+        --protocol tcp \
+        --port 1026-1028 \
+        --cidr ${SGW_VPC_CIDR} ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${VPCENDPOINT_STORAGEGW_SG_ID} \
+        --protocol tcp \
+        --port 1031 \
+        --cidr ${SGW_VPC_CIDR} ;
+
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${VPCENDPOINT_STORAGEGW_SG_ID} \
+        --protocol tcp \
+        --port 2222 \
+        --cidr ${SGW_VPC_CIDR} ;
+
 
 #S3用VPCEndpoint作成
 aws --profile ${PROFILE} \
@@ -236,10 +277,35 @@ aws --profile ${PROFILE} \
         --vpc-endpoint-type Interface \
         --service-name com.amazonaws.${REGION}.storagegateway \
         --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
+        --security-group-id ${VPCENDPOINT_STORAGEGW_SG_ID} ;
+
+#SSM用PCEndpoint作成
+aws --profile ${PROFILE} \
+    ec2 create-vpc-endpoint \
+        --vpc-id ${SGW_VPCID} \
+        --vpc-endpoint-type Interface \
+        --service-name com.amazonaws.${REGION}.ssm \
+        --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
+        --security-group-id ${VPCENDPOINT_SG_ID} ;
+
+aws --profile ${PROFILE} \
+    ec2 create-vpc-endpoint \
+        --vpc-id ${SGW_VPCID} \
+        --vpc-endpoint-type Interface \
+        --service-name com.amazonaws.${REGION}.ec2messages \
+        --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
+        --security-group-id ${VPCENDPOINT_SG_ID} ;
+
+aws --profile ${PROFILE} \
+    ec2 create-vpc-endpoint \
+        --vpc-id ${SGW_VPCID} \
+        --vpc-endpoint-type Interface \
+        --service-name com.amazonaws.${REGION}.ssmmessages \
+        --subnet-id $SGW_SUBNET1 $SGW_SUBNET2 \
         --security-group-id ${VPCENDPOINT_SG_ID} ;
 ```
 
-### (d) On-Prem-VPC: VPCEndpointの作成
+### (3)-(d) On-Prem-VPC: VPCEndpointの作成
 DNSサーバセットアップ後のテスト用にVPCEndpoint(Ec2)を作成
 ```shell
 #VPC Endpoint用SecurityGroup作成
@@ -259,7 +325,7 @@ aws --profile ${PROFILE} \
         --group-id ${ONPRE_VPCENDPOINT_SG_ID} \
         --protocol tcp \
         --port 443 \
-        --cidr 0.0.0.0/0 ;
+        --cidr ${ONPRE_VPC_CIDR};
 
 #On-Prrem-VPC: EC2用VPCEndpoint作成(動作テスト用)
 aws --profile ${PROFILE} \
@@ -271,8 +337,8 @@ aws --profile ${PROFILE} \
         --security-group-id ${ONPRE_VPCENDPOINT_SG_ID} ;
 ```
 
-## (3) オンプレDNSサーバ・Windowsサーバ作成
-### (a) セキュリティーグループ作成(DNS & Bastion)
+## (4) オンプレDNSサーバ・Windowsサーバ作成
+### (4)-(a) セキュリティーグループ作成(DNS & Bastion)
 (i) SSHログイン用 Security Group
 ```shell
 # SSHログイン用セキュリティーグループ作成
@@ -360,7 +426,7 @@ aws --profile ${PROFILE} \
         --port 53 \
         --cidr ${SGW_VPC_CIDR} ;
 ```
-### (b)インスタンス作成用の事前情報取得
+### (4)-(b)インスタンス作成用の事前情報取得
 ```shell
 KEYNAME="CHANGE_KEY_PAIR_NAME"  #環境に合わせてキーペア名を設定してください。  
 
@@ -380,7 +446,7 @@ WIN2019_AMIID=$(aws --profile ${PROFILE} --output text \
         --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' ) ;
 
 ```
-### (b) DNSサーバ構築
+### (4)-(c) DNSサーバ構築
 ```shell
 TAGJSON='
 [
@@ -518,7 +584,7 @@ aws --profile ${PROFILE} \
         --tag-specifications "${TAGJSON}" \
         --user-data "${USER_DATA}" ;
 ```
-### (c) VPC DHCPオプションセットの変更
+### (4)-(d) VPC DHCPオプションセットの変更
 作成したDNSサーバを利用する用にDHCPオプションセットを変更します。
 ```shell
 #DNSサーバのローカルIP取得
@@ -558,7 +624,7 @@ aws --profile ${PROFILE} \
       --vpc-id ${SGW_VPCID} \
       --dhcp-options-id ${SGW_DHCPSET_ID} ;
 ```
-### (d) Windows Clientサーバ作成
+### (4)-(e) Windows Clientサーバ作成
 ```shell
 # Windows ClientサーバのTAG設定
 TAGJSON='
@@ -584,7 +650,7 @@ aws --profile ${PROFILE} \
         --associate-public-ip-address \
         --tag-specifications "${TAGJSON}";
 ```
-### (e) DNSテスト
+### (4)-(f) DNSテスト
 作成したWindowsClientにRDPでログインし、作成したDNSサーバを利用しでパブリックのDNSサーバに参照できているか確認する。<br>
 (i)WindowsClientにRDPログインする<br>
 (ii) cmdを起動する<br>
@@ -637,136 +703,292 @@ Address:  10.2.64.115
 Address:  54.239.96.170 <=グローバルIPが応答されることを確認します。
 ```
 
-
-
-## (3) オンプレDNSサーバ・Windowsサーバ作成
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## (1)ベースの構築
-### (1)-(a) デプロイ用シェルのプロファイル設定
-デプロイ用のシェル(run_cfn.sh)に実行環境のプロファイルを設定します。
-- run_cfn.shをエディタで開き下記を編集します。
+## (5) StorageGateway作成
+### (5)-(a) StorageGateway用のSecurityGroup作成
+(i) SGW用 Security Group
 ```shell
+# SGW用セキュリティーグループ作成
+SGW_SG_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-security-group \
+        --group-name SGWSG \
+        --description "Allow gateway" \
+        --vpc-id ${SGW_VPCID}) ;
 
-# list of Environment
-Envs[0]=PoC;  ProfileList[0]=XXXXXXX #実行する端末に設定しているプロファイル名に修正する(デフォルトを利用したい場合は、defaultと指定)
-EnvsLast=0
+aws --profile ${PROFILE} \
+    ec2 create-tags \
+        --resources ${SGW_SG_ID} \
+        --tags "Key=Name,Value=StorageGWSG" ;
+
+# セキュリティーグループにStorageGatewayに必要となるinboundアクセス許可を追加
+# gatewayへのアクティベーションコード取得のため
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 80 \
+        --cidr 0.0.0.0/0 ;
+
+# gatewayへのコンソールログインのため
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 22 \
+        --cidr 0.0.0.0/0 ;
+
+# クライアントとのSMB接続(1)
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 139 \
+        --cidr 0.0.0.0/0 ;
+
+# クライアントとのSMB接続(2)
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 445 \
+        --cidr 0.0.0.0/0 ;
+
+# クライアントとのNFS接続(1) NFS
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 2049 \
+        --cidr 0.0.0.0/0 ;
+
+# クライアントとのNFS接続(2) rpcbind/sunrpc for NFSv3
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 111 \
+        --cidr 0.0.0.0/0 ;
+
+# クライアントとのNFS接続(3) gensha for NFSv3
+aws --profile ${PROFILE} \
+    ec2 authorize-security-group-ingress \
+        --group-id ${SGW_SG_ID} \
+        --protocol tcp \
+        --port 20048 \
+        --cidr 0.0.0.0/0 ;
 ```
-
-### (1)-(c) EC2キーペア設定
-"run_cfn.sh"があるディレクトリで下記コマンドを実行して、stackのパラメータ用JSONのキーペア設定を環境に合わせた内容に更新します。
+### (5)-(b) EC2インスタンスロール(SSM用)
 ```shell
-KeyPairName="KEY_PAIR_NAME" #環境に合わせてキーペア名称を設定"
+POLICY='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}'
+#IAMロールの作成
+aws --profile ${PROFILE} \
+    iam create-role \
+        --role-name "Ec2-ForStorageGWRole" \
+        --assume-role-policy-document "${POLICY}" \
+        --max-session-duration 43200
+#Policyのアタッチ
+aws --profile ${PROFILE} \
+    iam attach-role-policy \
+        --role-name "Ec2-ForStorageGWRole" \
+        --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
-for i in ExterResources/InputParameter-SgPoC-Proxy.json ExterResources/InputParameter-SgPoC-Proxy.json ExterResources/InputParameter-SgPoC-Bastion.json FuncResources/InputParameter-SgPoC-Client.json FuncResources/InputParameter-SgPoC-Manager.json StorageGateway/InputParameter-SgPoC-Gateway1.json
-do
-    sed -i".bak" -e "s/KEY_PAIR_NAME/${KeyPairName}/g" ${i}
-done
+#インスタンスプロファイルの作成とIAMロールのアタッチ
+aws --profile ${PROFILE} \
+    iam create-instance-profile \
+        --instance-profile-name "Ec2-ForStorageGWProfile";
+
+aws --profile ${PROFILE} \
+    iam add-role-to-instance-profile \
+        --instance-profile-name "Ec2-ForStorageGWProfile" \
+        --role-name "Ec2-ForStorageGWRole";
 ```
-### (1)-(d) CloudFormationデプロイ 
+### (5)-(c) StorageGateway用S3バケット作成
 ```shell
-./run_cfn.sh SgPoC Iam create
-./run_cfn.sh SgPoC VpcFunc create
-./run_cfn.sh SgPoC VpcExter create
-./run_cfn.sh SgPoC VpcPeer create
-./run_cfn.sh SgPoC ExterSg create
-./run_cfn.sh SgPoC Bastion create
-./run_cfn.sh SgPoC Proxy create
-./run_cfn.sh SgPoC Vpce create
-./run_cfn.sh SgPoC Sg create
-./run_cfn.sh SgPoC S3 create
+BUCKET_NAME="storagegw-bucket-$( od -vAn -to1 </dev/urandom  | tr -d " " | fold -w 10 | head -n 1)"
+REGION=$(aws --profile ${PROFILE} configure get region)
 
-./run_cfn.sh SgPoC Client create
-./run_cfn.sh SgPoC Manager create
+aws --profile ${PROFILE} \
+    s3api create-bucket \
+        --bucket ${BUCKET_NAME} \
+        --create-bucket-configuration LocationConstraint=${REGION};
 ```
-
-## (2)StorageGatewayのVPC Endpointとファイルゲートウェイのインスタンスデプロイ
-### (2)-(a) StorageGateway用 VPCE&Logsのデプロイ
+### (5)-(d) StorageGateway用IAMRole作成
 ```shell
-./run_cfn.sh SgPoC StrageVpce create
-./run_cfn.sh SgPoC Logs create
+POLICY='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "storagegateway.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}'
+#IAMロールの作成
+aws --profile ${PROFILE} \
+    iam create-role \
+        --role-name "StorageGateway-S3AccessRole" \
+        --assume-role-policy-document "${POLICY}" \
+        --max-session-duration 43200
+
+#In-line Policyの追加
+POLICY='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OperatBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetAccelerateConfiguration",
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:ListBucket",
+        "s3:ListBucketVersions",
+        "s3:ListBucketMultipartUploads"
+      ],
+      "Resource": [
+        "arn:aws:s3:::'"${BUCKET_NAME}"'"
+      ]
+    },
+    {
+      "Sid": "PuAndGetObject",
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:GetObject",
+        "s3:GetObjectAcl",
+        "s3:GetObjectVersion",
+        "s3:ListMultipartUploadParts",
+        "s3:PutObject",
+        "s3:PutObjectAcl"
+      ],
+      "Resource": [
+        "arn:aws:s3:::'"${BUCKET_NAME}"'/*"
+      ]
+    }
+  ]
+}'
+#インラインポリシーの設定
+aws --profile ${PROFILE} \
+    iam put-role-policy \
+        --role-name "StorageGateway-S3AccessRole" \
+        --policy-name "AccessS3buckets" \
+        --policy-document "${POLICY}";
 ```
-### (2)-(b) StorageGateway用 Gateway用EC2インスタンスのデプロイ
-
-デプロイ前に、"/StorageGateway/InputParameter-SgPoC-Gateway1.json"で、AMI-IDとインスタンスタイプを確認し、必要に応じて修正します。
-- AMI-ID: [StorageGatewayのユーザーガイドの](https://docs.aws.amazon.com/storagegateway/latest/userguide/ec2-gateway-file.html)「Amazon EC2 ホストで ファイルゲートウェイ をデプロイする」を参考に、最新のAMI-IDを設定します
-- インスタンスタイプ: c5.4xlargeを設定しているので、必要に応じて変更してください。
-
+### (5)-(e) ファイルゲートウェイ・インスタンスの作成
 ```shell
-./run_cfn.sh SgPoC Gateway1 create
+# FileGatewayの最新のAMIIDを取得する
+FGW_AMIID=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-images \
+        --owners amazon \
+        --filters 'Name=name,Values=aws-thinstaller-??????????' \
+                  'Name=state,Values=available' \
+        --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' );
 
+#ファイルゲートウェイインスタンスの起動
+INSTANCE_TYPE=c4.4xlarge
+TAGJSON='
+[
+    {
+        "ResourceType": "instance",
+        "Tags": [
+            {
+                "Key": "Name",
+                "Value": "Fgw"
+            }
+        ]
+    }
+]'
+BLOCK_DEVICE_MAPPINGS='[
+    {
+        "DeviceName": "/dev/xvda",
+        "Ebs": {
+            "DeleteOnTermination": true,
+            "VolumeType": "io1",
+            "Iops": 4000,
+            "VolumeSize": 350,
+            "Encrypted": false
+        }
+    },
+    {
+        "DeviceName": "/dev/sdm",
+        "Ebs": {
+            "DeleteOnTermination": true,
+            "VolumeType": "io1",
+            "Iops": 1500,
+            "VolumeSize": 1024,
+            "Encrypted": false
+        }
+    }
+]'
+
+aws --profile ${PROFILE} \
+    ec2 run-instances \
+        --image-id ${FGW_AMIID} \
+        --instance-type ${INSTANCE_TYPE} \
+        --iam-instance-profile Name="Ec2-ForStorageGWProfile" \
+        --key-name ${KEYNAME} \
+        --subnet-id ${SGW_SUBNET1} \
+        --security-group-ids ${SGW_SG_ID} \
+        --block-device-mappings "${BLOCK_DEVICE_MAPPINGS}" \
+        --tag-specifications "${TAGJSON}" \
+        --monitoring Enabled=true;
 ```
-## (3) ファイルゲートウェイのアクティベーション
-ここからは、Managerインスタンス上でAWS CLIで実行します。
-### (3)-(a) Managerインスタンスへのログイン
-- マネージメントコンソールを開き、「Systems Manager」のサービスに移動する
-- 左のバーから「セッションマネージャー」を選び、「セッションの開始」を押す
-- インスタンス名「SgPoC-Manager」を選び、「セッションの開始」を押す
-- ログインしたら下記を実行し、ec2-userになり、aws cliの初期設定を行う
-```shell
-sudo -u ec2-user -i
-
-# AWS cli初期設定
-Region=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed -e 's/.$//')
-aws configure set region ${Region}
-aws configure set output json
-
-#FowardProxyIP=<FowardProxy IP Address>
-FowardProxyIP=$(aws --output text cloudformation describe-stacks --stack-name SgPoC-Proxy --query 'Stacks[].Outputs[?OutputKey==`ProxyInstance2PrivateIp`].[OutputValue]')
-FowardProxyPort=3128
-
-#AWS Cliアップデート
-curl -x http://${FowardProxyIP}:${FowardProxyPort} \
-     -o "get-pip.py" \
-     "https://bootstrap.pypa.io/get-pip.py" 
-sudo python get-pip.py --proxy="http://${FowardProxyIP}:${FowardProxyPort}"
-
-pip install --upgrade --user awscli --proxy="http://${FowardProxyIP}:${FowardProxyPort}"
-echo 'export PATH=$HOME/.local/bin:$PATH' >> ~/.bashrc
-. ~/.bashrc
-
-```
-### (3)-（b) アクティベーションキーの取得
+### (5)-(f) アクティベーションキーの取得
 ファイルゲートウェイから、 アクティベーションキーを取得します。
-取得したアクティベーションキーは
+(i)アクティベーション用のURL作成
 ```shell
-Gateway1DNS=$(aws --output text ec2 describe-instances --query 'Reservations[*].Instances[*].PrivateIpAddress' --filters "Name=tag:Name,Values=SgPoC-Gateway-1" "Name=instance-state-name,Values=running")
-Region=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed -e 's/.$//')
-VPCEndpointDNSname=$(aws --output text ec2 describe-vpc-endpoints  --query 'VpcEndpoints[*].DnsEntries[0].DnsName' --filters "Name=service-name,Values=com.amazonaws.ap-northeast-1.storagegateway")
+#構成情報取得
+GatewayIP=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-instances  \
+        --filters "Name=tag:Name,Values=Fgw" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[*].Instances[*].PrivateIpAddress' )
+REGION=$(aws --profile ${PROFILE} configure get region)
+VPCEndpointDNSname=$(aws --profile ${PROFILE} --output text \
+    ec2 describe-vpc-endpoints \
+        --filters \
+            "Name=service-name,Values=com.amazonaws.ap-northeast-1.storagegateway" \
+            "Name=vpc-id,Values=${SGW_VPCID}" \
+    --query 'VpcEndpoints[*].DnsEntries[0].DnsName' );
+echo ${GatewayIP} ${REGION} ${VPCEndpointDNSname}
 
-ACTIVATION_KEY=$(curl -s "http://${Gateway1DNS}/?gatewayType=FILE_S3&activationRegion=${Region}&vpcEndpoint=${VPCEndpointDNSname}&no_redirect")
-
-# 確認のため、取得したアクティベーションキーを確認する
-echo $ACTIVATION_KEY
+#アクティベーション先のURL生成
+ACTIVATION_URL="http://${GatewayIP}/?gatewayType=FILE_S3&activationRegion=${REGION}&vpcEndpoint=${VPCEndpointDNSname}&no_redirect"
+echo ${ACTIVATION_URL}
 ```
 参考
 https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/gateway-private-link.html#GettingStartedActivateGateway-file-vpc
 
-### (3)-（c) アクティベーション
+(ii)アクティベーションキーの取得<br>
+WindowsClientのIEなどから、生成したURLでアクティベーションキーを取得します。
+### (5)-(g) アクティベーション
 ファイルゲートウェイをアクティベーションします。
 ```shell
-aws storagegateway activate-gateway \
-    --activation-key ${ACTIVATION_KEY} \
-    --gateway-name SgPoC-Gateway-1 \
-    --gateway-timezone "GMT+9:00" \
-    --gateway-region ${Region} \
-    --gateway-type FILE_S3
+ACTIVATION_KEY=<取得したアクティベーションキーを入力>
+REGION=$(aws --profile ${PROFILE} configure get region)
+aws --profile ${PROFILE} \
+    storagegateway activate-gateway \
+        --activation-key ${ACTIVATION_KEY} \
+        --gateway-name SgPoC-Gateway-1 \
+        --gateway-timezone "GMT+9:00" \
+        --gateway-region ${REGION} \
+        --gateway-type FILE_S3
 
 #作成したGatewayのARN取得
 # atewayState"が "RUNNING"になるまで待つ
@@ -782,6 +1004,21 @@ aws storagegateway describe-gateway-information --gateway-arn ${GATEWAY_ARN}
 - "CACHED" : VolumeGateway(Cache tyep)
 - "VTL"    : VirtualTapeLibrary
 - "FILE_S3": File Gateway
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### (3)-（d) ローカルディスク設定
 ゲートウェイのローカルディスクが割り当てられます。ここでは、これらのディスクを使用するようにゲートウェイを設定します。
