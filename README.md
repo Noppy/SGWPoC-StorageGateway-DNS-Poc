@@ -890,6 +890,13 @@ FGW_AMIID=$(aws --profile ${PROFILE} --output text \
                   'Name=state,Values=available' \
         --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' );
 
+#Security Group ID取得
+GW_SG_ID=$(aws --profile ${PROFILE} --output text \
+        ec2 describe-security-groups \
+                --filter 'Name=group-name,Values=SGWSG' \
+        --query 'SecurityGroups[].GroupId');
+
+
 #ファイルゲートウェイインスタンスの起動
 INSTANCE_TYPE=c4.4xlarge
 TAGJSON='
