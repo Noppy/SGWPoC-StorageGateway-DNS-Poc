@@ -584,7 +584,7 @@ aws --profile ${PROFILE} \
         --tag-specifications "${TAGJSON}" \
         --user-data "${USER_DATA}" ;
 ```
-### (4)-(d) VPC DHCPオプションセットの変更
+### (4)-(d) OnPrem-VPC DHCPオプションセットの変更
 作成したDNSサーバを利用する用にDHCPオプションセットを変更します。
 ```shell
 #DNSサーバのローカルIP取得
@@ -602,27 +602,6 @@ ONPRE_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
             "Key=domain-name-servers,Values=${DnsLocalIP}" \
             "Key=ntp-servers,Values=169.254.169.123" \
     --query 'DhcpOptions.DhcpOptionsId'; )
-
-#SGW VPC: DHCPオプションセット関連付け
-aws --profile ${PROFILE} \
-    ec2 associate-dhcp-options \
-      --vpc-id ${ONPRE_VPCID} \
-      --dhcp-options-id ${ONPRE_DHCPSET_ID} ;
-      
-#SGW VPC: DHCPオプションセット作成
-SGW_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
-    ec2 create-dhcp-options \
-        --dhcp-configurations \
-            "Key=domain-name,Values=sgw.internal" \
-            "Key=domain-name-servers,Values=${DnsLocalIP}" \
-            "Key=ntp-servers,Values=169.254.169.123" \
-    --query 'DhcpOptions.DhcpOptionsId'; )
-
-#SGW VPC: DHCPオプションセット関連付け
-aws --profile ${PROFILE} \
-    ec2 associate-dhcp-options \
-      --vpc-id ${SGW_VPCID} \
-      --dhcp-options-id ${SGW_DHCPSET_ID} ;
 ```
 ### (4)-(e) Windows Clientサーバ作成
 ```shell
@@ -977,7 +956,7 @@ https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/gateway-privat
 
 (ii)アクティベーションキーの取得<br>
 WindowsClientのIEなどから、生成したURLでアクティベーションキーを取得します。
-### (5)-(g) アクティベーション
+### (5)-(g) ゲートウェイのアクティベーション
 ファイルゲートウェイをアクティベーションします。
 ```shell
 ACTIVATION_KEY=<取得したアクティベーションキーを入力>
@@ -1005,25 +984,8 @@ aws storagegateway describe-gateway-information --gateway-arn ${GATEWAY_ARN}
 - "VTL"    : VirtualTapeLibrary
 - "FILE_S3": File Gateway
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### (3)-（d) ローカルディスク設定
-ゲートウェイのローカルディスクが割り当てられます。ここでは、これらのディスクを使用するようにゲートウェイを設定します。
+### (5)-(h) ローカルディスク設定
 ```shell
-
 #ローカルストレージの確認
 GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ match($0, /arn:aws:storagegateway:\S*/); print substr($0, RSTART, RLENGTH) }')
 DiskIds=$(aws --output text storagegateway list-local-disks --gateway-arn ${GATEWAY_ARN} --query 'Disks[*].DiskId'| sed -e 's/\n/ /')
@@ -1039,6 +1001,50 @@ aws storagegateway add-cache \
 aws --output text storagegateway list-local-disks --gateway-arn ${GATEWAY_ARN}
 ```
 参照：https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/create-gateway-file.html
+
+
+
+
+
+
+
+
+
+
+
+
+
+#SGW VPC: DHCPオプションセット関連付け
+aws --profile ${PROFILE} \
+    ec2 associate-dhcp-options \
+      --vpc-id ${ONPRE_VPCID} \
+      --dhcp-options-id ${ONPRE_DHCPSET_ID} ;
+      
+#SGW VPC: DHCPオプションセット作成
+SGW_DHCPSET_ID=$(aws --profile ${PROFILE} --output text \
+    ec2 create-dhcp-options \
+        --dhcp-configurations \
+            "Key=domain-name,Values=sgw.internal" \
+            "Key=domain-name-servers,Values=${DnsLocalIP}" \
+            "Key=ntp-servers,Values=169.254.169.123" \
+    --query 'DhcpOptions.DhcpOptionsId'; )
+
+#SGW VPC: DHCPオプションセット関連付け
+aws --profile ${PROFILE} \
+    ec2 associate-dhcp-options \
+      --vpc-id ${SGW_VPCID} \
+      --dhcp-options-id ${SGW_DHCPSET_ID} ;
+
+
+
+
+
+
+### (3)-（d) ローカルディスク設定
+ゲートウェイのローカルディスクが割り当てられます。ここでは、これらのディスクを使用するようにゲートウェイを設定します。
+```shell
+
+
 
 ### (3)-(e) CloudWatchログ設定
 ```shell
