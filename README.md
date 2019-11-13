@@ -689,7 +689,7 @@ Address:  10.2.64.115
 Address:  54.239.96.170 <=グローバルIPが応答されることを確認します。
 ```
 
-## (5) StorageGateway作成
+## (5) StorageGateway作成(事前準備)
 ### (5)-(a) StorageGateway用のSecurityGroup作成
 (i) SGW用 Security Group
 ```shell
@@ -877,7 +877,10 @@ aws --profile ${PROFILE} \
         --policy-name "AccessS3buckets" \
         --policy-document "${POLICY}";
 ```
-### (5)-(e) ファイルゲートウェイ・インスタンスの作成
+
+## (６) Provided-DNS環境でのテスト
+正常動作確認のため、Provided-DNSを利用した環境で正常にゲートウェイをアクティベーションして利用可能であることを確認します。
+### (6)-(a) ファイルゲートウェイ・インスタンスの作成
 ```shell
 # FileGatewayの最新のAMIIDを取得する
 FGW_AMIID=$(aws --profile ${PROFILE} --output text \
@@ -936,7 +939,7 @@ aws --profile ${PROFILE} \
         --tag-specifications "${TAGJSON}" \
         --monitoring Enabled=true;
 ```
-### (5)-(f) アクティベーションキーの取得
+### (6)-(b) アクティベーションキーの取得
 ファイルゲートウェイから、 アクティベーションキーを取得します。
 (i)アクティベーション用のURL作成
 ```shell
@@ -991,7 +994,7 @@ aws storagegateway describe-gateway-information --gateway-arn ${GATEWAY_ARN}
 - "VTL"    : VirtualTapeLibrary
 - "FILE_S3": File Gateway
 
-### (5)-(h) ローカルディスク設定
+### (6)-(c) ローカルディスク設定
 ```shell
 #ローカルストレージの確認
 GATEWAY_ARN=$(aws --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ match($0, /arn:aws:storagegateway:\S*/); print substr($0, RSTART, RLENGTH) }')
