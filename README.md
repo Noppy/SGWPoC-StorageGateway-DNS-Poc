@@ -2,7 +2,7 @@
 StorageGateway(ファイルゲートウェイ)の検証環境を作成するCloudFormationと手順
 
 # 作成環境
-<center><img src="./Documents/Arch.png" whdth=500></center>
+<center><img src="./Documents/arch.png" whdth=500></center>
 
 # 作成手順
 ## (1)事前設定
