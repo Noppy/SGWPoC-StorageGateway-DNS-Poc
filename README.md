@@ -19,6 +19,7 @@ export REGION=ap-northeast-1
 ## (2)VPCの作成(CloudFormation利用)
 IGWでインターネットアクセス可能で、パブリックアクセス可能なサブネットx3、プライベートなサブネットx3の合計6つのサブネットを所有するVPCを作成します。
 <center><img src="./Documents/Step2.png" whdth=500></center>
+
 ### (2)-(a)テンプレートのダウンロード
 私が作成し利用しているVPC作成用のCloudFormationテンプレートを利用します。まず、githubからテンプレートをダウンロードします。
 ```shell
@@ -122,6 +123,7 @@ aws --profile ${PROFILE} cloudformation create-stack \
 ２つのVPCをPeering接続し、必要となるVPC Endpointを作成します。<br>
 オンプレを措定した"On-Prem-VPC"のVPC Endpointは、DNSサーバ作成後の動作テスト用に作成するものです。
 <center><img src="./Documents/Step3.png" whdth=500></center>
+
 ### (3)-(a) 構成情報取得
 ```shell
 #構成情報取得
@@ -343,6 +345,7 @@ aws --profile ${PROFILE} \
 
 ## (4) オンプレDNSサーバ・Windowsサーバ作成
 <center><img src="./Documents/Step4.png" whdth=500></center>
+
 ### (4)-(a) セキュリティーグループ作成(DNS & Bastion)
 (i) SSHログイン用 Security Group
 ```shell
@@ -697,6 +700,7 @@ Address:  54.239.96.170 <=グローバルIPが応答されることを確認し�
 ## (5) StorageGateway作成(事前準備)
 Storage Gatewayで利用するS3のバケットと、S3アクセス用にStorage Gatewayが利用するIAMロールを作成します。
 <center><img src="./Documents/Step5.png" whdth=500></center>
+
 ### (5)-(a) StorageGateway用のSecurityGroup作成
 (i) SGW用 Security Group
 ```shell
@@ -851,6 +855,7 @@ aws --profile ${PROFILE} \
 ## (６) Provided-DNS環境でのテスト
 正常動作確認のため、Provided-DNSを利用した環境で正常にゲートウェイをアクティベーションして利用可能であることを確認します。
 <center><img src="./Documents/Step6.png" whdth=500></center>
+
 ### (6)-(a) ファイルゲートウェイ・インスタンスの作成
 ```shell
 # FileGatewayの最新のAMIIDを取得する
