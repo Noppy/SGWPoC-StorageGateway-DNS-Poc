@@ -1220,7 +1220,7 @@ https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/gateway-privat
 
 (ii)アクティベーションキーの取得<br>
 DNSサーバ上から、生成したURLでアクティベーションキーを取得します。(WindowsClientのIEでは上手くアクティベーションできなかったため。理由不明)
-### (6)-(c) ゲートウェイのアクティベーション
+### (8)-(c) ゲートウェイのアクティベーション
 ファイルゲートウェイをアクティベーションします。
 ```shell
 ACTIVATION_KEY=<取得したアクティベーションキーを入力>
@@ -1245,7 +1245,7 @@ aws --profile ${PROFILE} storagegateway describe-gateway-information --gateway-a
 - "VTL"    : VirtualTapeLibrary
 - "FILE_S3": File Gateway
 
-### (6)-(d) ローカルディスク設定
+### (8)-(d) ローカルディスク設定
 ```shell
 #ローカルストレージの確認
 GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
@@ -1266,7 +1266,7 @@ aws --profile ${PROFILE} --output text \
 ```
 参照：https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/create-gateway-file.html
 
-### (6)-(e) SMB設定(SMBSecurityStrategy)
+### (8)-(e) SMB設定(SMBSecurityStrategy)
 ```shell
 GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
 
@@ -1275,7 +1275,7 @@ aws --profile ${PROFILE} storagegateway \
         --gateway-arn ${GATEWAY_ARN} \
         --smb-security-strategy MandatoryEncryption
 ```
-### (6)-(f) ゲストアクセス用の SMB ファイル共有を設定
+### (8)-(f) ゲストアクセス用の SMB ファイル共有を設定
 ```shell
 PASSWORD="HogeHoge@"
 aws --profile ${PROFILE} storagegateway \
@@ -1283,7 +1283,7 @@ aws --profile ${PROFILE} storagegateway \
         --gateway-arn ${GATEWAY_ARN} \
         --password ${PASSWORD}
 ```
-### (6)-(g) SMBファイル共有
+### (8)-(g) SMBファイル共有
 ```shell
 #情報取得
 BUCKETARN="arn:aws:s3:::${BUCKET_NAME}" #${BUCKET_NAME}は、バケット作成時に設定した変数
