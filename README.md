@@ -1189,10 +1189,6 @@ aws --profile ${PROFILE} \
         --tag-specifications "${TAGJSON}" \
         --monitoring Enabled=true;
 ```
-
-ここから
-
-
 ### (8)-(b) アクティベーションキーの取得
 ファイルゲートウェイから、 アクティベーションキーを取得します。
 (i)アクティベーション用のURL作成
@@ -1308,10 +1304,97 @@ aws --profile ${PROFILE} storagegateway \
         --guess-mime-type-enabled \
         --authentication GuestAccess
 ```
+### (9) Windows Clinetからの接続確認
+(i)マネージメントコンソールの「Storage Gateway」→「ファイル共有」でファイル共有を選び、コマンドをコピーする  
+(ii)マネージメントコンソールWindowsにRDPログインし、コマンドラインから上記でコピーしたコマンドを実行する(パスワードは、HogeHoge@)  
+
+### (10) Storage Gatewayインスタンスの設定確認
+DNSサーバを踏み台として、StorageGatewayにSSHログインし、DNS設定と接続状況を確認する。<br>
+### (10)-(a) ゲートウェイへのsshログイン
+DNSサーバを踏み台として、ゲートウェイにsshログインする
+```shell
+ssh admin@<ゲートウェイのIPアドレス>
+```
+### (10)-(b) DNS参照先の確認
+DNS参照先サーバとして、作成したDNSサーバのローカルIPが登録されていることを確認します。
+```
+	AWS Storage Gateway - Configuration
+
+	#######################################################################
+	##  Currently connected network adapters:
+	##
+	##  eth0: 10.1.64.102	
+	#######################################################################
+
+	1: Configure HTTP Proxy
+	2: Network Configuration
+	3: Test Network Connectivity
+	4: View System Resource Check (0 Errors)
+	5: Command Prompt
+
+	Press "x" to exit session
+
+        Enter command: 2
+```
+Network ConfigurationでDNS設定を確認します。
+```
+	AWS Storage Gateway - Network Configuration
+
+	1: Edit DNS Configuration
+	2: View DNS Configuration
+
+	Press "x" to exit
+
+	Enter command: 2
+
+	DNS Configuration
 
 
+	Available adapters: eth0
+	Enter network adapter: eth0
+
+	Source: Assigned by DHCP
+	DNS: 10.2.64.19  <<=作成したDNSサーバのIPであることを確認
 
 
+	Press any key to continue
+```
+### (10)-(c) ネットワークの疎通確認
+ネットワークの疎通で、VPC EndpointそのもののDNS(アクティベーションキー取得時に指定したDNS)で接続していることを確認します。
+```
+	AWS Storage Gateway - Configuration
 
+	#######################################################################
+	##  Currently connected network adapters:
+	##
+	##  eth0: 10.1.64.102	
+	#######################################################################
 
+	1: Configure HTTP Proxy
+	2: Network Configuration
+	3: Test Network Connectivity
+	4: View System Resource Check (0 Errors)
+	5: Command Prompt
 
+	Press "x" to exit session
+
+        Enter command: 3 
+```
+"Network Configuration"に遷移した後の画面です。ここで、VPC Endpointでの疎通が取れていることを確認します。
+```
+	Testing network connection
+	
+	client-cp.storagegateway.ap-northeast-1.amazonaws.com
+	via vpce-059b6f61fc8765ae8-bypjfko4.storagegateway.ap-northeast-1.vpce.amazonaws.com:1026
+	  [ PASSED ]
+	
+	proxy-app.storagegateway.ap-northeast-1.amazonaws.com
+	via vpce-059b6f61fc8765ae8-bypjfko4.storagegateway.ap-northeast-1.vpce.amazonaws.com:1028
+	  [ PASSED ]
+	
+	dp-1.storagegateway.ap-northeast-1.amazonaws.com
+	via vpce-059b6f61fc8765ae8-bypjfko4.storagegateway.ap-northeast-1.vpce.amazonaws.com:1031
+	  [ PASSED ]
+	
+	Press Return to Continue
+```
