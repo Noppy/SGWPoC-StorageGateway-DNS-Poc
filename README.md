@@ -1,5 +1,5 @@
 # StorageGateway検証環境
-StorageGateway(ファイルゲートウェイ)の検証環境を作成するCloudFormationと手順
+VPC Endpointを利用しDNSをインターネットで解決する環境で、StorageGateway(ファイルゲートウェイ)が稼働可能かを検証した時の手順です。
 
 # 作成環境
 <center><img src="./Documents/arch.png" whdth=500></center>
@@ -8,8 +8,10 @@ StorageGateway(ファイルゲートウェイ)の検証環境を作成するClou
 ## (1)事前設定
 ### (1)-(a) 作業環境の準備
 下記を準備します。
+* bashが利用可能な環境(LinuxやMacの環境)
 * aws-cliのセットアップ
 * AdministratorAccessポリシーが付与され実行可能な、aws-cliのProfileの設定
+
 ### (1)-(b) CLI実行用の事前準備
 これ以降のAWS-CLIで共通で利用するパラメータを環境変数で設定しておきます。
 ```shell
