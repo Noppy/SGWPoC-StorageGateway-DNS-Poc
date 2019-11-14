@@ -864,7 +864,7 @@ aws --profile ${PROFILE} \
 FGW_AMIID=$(aws --profile ${PROFILE} --output text \
     ec2 describe-images \
         --owners amazon \
-        --filters 'Name=name,Values=aws-thinstaller-??????????' \
+        --filters 'Name=name,Values=aws-storage-gateway-??????????' \
                   'Name=state,Values=available' \
         --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' );
 
@@ -1109,7 +1109,7 @@ KEYNAME="CHANGE_KEY_PAIR_NAME"  #環境に合わせてキーペア名を設定�
 FGW_AMIID=$(aws --profile ${PROFILE} --output text \
     ec2 describe-images \
         --owners amazon \
-        --filters 'Name=name,Values=aws-thinstaller-??????????' \
+        --filters 'Name=name,Values=aws-storage-gateway-??????????' \
                   'Name=state,Values=available' \
         --query 'reverse(sort_by(Images, &CreationDate))[:1].ImageId' );
 
