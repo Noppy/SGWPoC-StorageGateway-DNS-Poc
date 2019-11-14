@@ -2,7 +2,7 @@
 StorageGateway(ファイルゲートウェイ)の検証環境を作成するCloudFormationと手順
 
 # 作成環境
-![CFn_configuration](./Documents/arch.png)
+<center><img src="./Documents/Arch.png" whdth=500></center>
 
 # 作成手順
 ## (1)事前設定
@@ -18,6 +18,7 @@ export REGION=ap-northeast-1
 ```
 ## (2)VPCの作成(CloudFormation利用)
 IGWでインターネットアクセス可能で、パブリックアクセス可能なサブネットx3、プライベートなサブネットx3の合計6つのサブネットを所有するVPCを作成します。
+<center><img src="./Documents/Step2.png" whdth=500></center>
 ### (2)-(a)テンプレートのダウンロード
 私が作成し利用しているVPC作成用のCloudFormationテンプレートを利用します。まず、githubからテンプレートをダウンロードします。
 ```shell
@@ -118,6 +119,9 @@ aws --profile ${PROFILE} cloudformation create-stack \
     --capabilities CAPABILITY_IAM ;
 ```
 ## (3) Peering & VPCEndpoint設定
+２つのVPCをPeering接続し、必要となるVPC Endpointを作成します。<br>
+オンプレを措定した"On-Prem-VPC"のVPC Endpointは、DNSサーバ作成後の動作テスト用に作成するものです。
+<center><img src="./Documents/Step3.png" whdth=500></center>
 ### (3)-(a) 構成情報取得
 ```shell
 #構成情報取得
@@ -338,6 +342,7 @@ aws --profile ${PROFILE} \
 ```
 
 ## (4) オンプレDNSサーバ・Windowsサーバ作成
+<center><img src="./Documents/Step4.png" whdth=500></center>
 ### (4)-(a) セキュリティーグループ作成(DNS & Bastion)
 (i) SSHログイン用 Security Group
 ```shell
@@ -690,6 +695,8 @@ Address:  54.239.96.170 <=グローバルIPが応答されることを確認し�
 ```
 
 ## (5) StorageGateway作成(事前準備)
+Storage Gatewayで利用するS3のバケットと、S3アクセス用にStorage Gatewayが利用するIAMロールを作成します。
+<center><img src="./Documents/Step5.png" whdth=500></center>
 ### (5)-(a) StorageGateway用のSecurityGroup作成
 (i) SGW用 Security Group
 ```shell
@@ -762,44 +769,7 @@ aws --profile ${PROFILE} \
         --port 20048 \
         --cidr 0.0.0.0/0 ;
 ```
-### (5)-(b) EC2インスタンスロール(SSM用)
-```shell
-POLICY='{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "",
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "ec2.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}'
-#IAMロールの作成
-aws --profile ${PROFILE} \
-    iam create-role \
-        --role-name "Ec2-ForStorageGWRole" \
-        --assume-role-policy-document "${POLICY}" \
-        --max-session-duration 43200
-#Policyのアタッチ
-aws --profile ${PROFILE} \
-    iam attach-role-policy \
-        --role-name "Ec2-ForStorageGWRole" \
-        --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-
-#インスタンスプロファイルの作成とIAMロールのアタッチ
-aws --profile ${PROFILE} \
-    iam create-instance-profile \
-        --instance-profile-name "Ec2-ForStorageGWProfile";
-
-aws --profile ${PROFILE} \
-    iam add-role-to-instance-profile \
-        --instance-profile-name "Ec2-ForStorageGWProfile" \
-        --role-name "Ec2-ForStorageGWRole";
-```
-### (5)-(c) StorageGateway用S3バケット作成
+### (5)-(b) StorageGateway用S3バケット作成
 ```shell
 BUCKET_NAME="storagegw-bucket-$( od -vAn -to1 </dev/urandom  | tr -d " " | fold -w 10 | head -n 1)"
 REGION=$(aws --profile ${PROFILE} configure get region)
@@ -809,7 +779,7 @@ aws --profile ${PROFILE} \
         --bucket ${BUCKET_NAME} \
         --create-bucket-configuration LocationConstraint=${REGION};
 ```
-### (5)-(d) StorageGateway用IAMRole作成
+### (5)-(c) StorageGateway用IAMRole作成
 ```shell
 POLICY='{
   "Version": "2012-10-17",
@@ -880,6 +850,7 @@ aws --profile ${PROFILE} \
 
 ## (６) Provided-DNS環境でのテスト
 正常動作確認のため、Provided-DNSを利用した環境で正常にゲートウェイをアクティベーションして利用可能であることを確認します。
+<center><img src="./Documents/Step6.png" whdth=500></center>
 ### (6)-(a) ファイルゲートウェイ・インスタンスの作成
 ```shell
 # FileGatewayの最新のAMIIDを取得する
@@ -938,7 +909,6 @@ aws --profile ${PROFILE} \
     ec2 run-instances \
         --image-id ${FGW_AMIID} \
         --instance-type ${INSTANCE_TYPE} \
-        --iam-instance-profile Name="Ec2-ForStorageGWProfile" \
         --key-name ${KEYNAME} \
         --subnet-id ${SGW_SUBNET1} \
         --security-group-ids ${SGW_SG_ID} \
@@ -1089,8 +1059,11 @@ aws --profile ${PROFILE} ec2 \
         --instance-ids ${GATEWAY_INSTANCE_ID};
 ```
 ### (8) 個別DNS環境でのテスト - 事前準備(DHCP変更)
-テスト実施で、Internetへ参照する個別DNSサーバを利用した環境で稼働するゲートウェイをアクティベーションして利用可能か確認する。
+テスト実施で、Internetへ参照する個別DNSサーバを利用した環境で稼働するゲートウェイをアクティベーションして利用可能か確認します。
+<center><img src="./Documents/Step8.png" whdth=500></center>
 
+### (8)-(a) VPCのDHCPオプションセットの変更
+StorageGateway側のVPCのDHCPオプションを変更し、起動したEC2インスタンスがDNSサーバへ参照するようにします。
 ```shell
 #DNSサーバのローカルIP取得
 DnsLocalIP=$(aws --profile ${PROFILE} --output text \
@@ -1121,8 +1094,8 @@ aws --profile ${PROFILE} \
       --vpc-id ${SGW_VPCID} \
       --dhcp-options-id ${SGW_DHCPSET_ID} ;
 ```
-### (8) 個別DNS環境でのテスト - 実テスト
-### (8)-(a) ファイルゲートウェイ・インスタンスの作成
+
+### (8)-(b) ファイルゲートウェイ・インスタンスの作成
 ```shell
 KEYNAME="CHANGE_KEY_PAIR_NAME"  #環境に合わせてキーペア名を設定してください。
 # FileGatewayの最新のAMIIDを取得する
@@ -1181,7 +1154,6 @@ aws --profile ${PROFILE} \
     ec2 run-instances \
         --image-id ${FGW_AMIID} \
         --instance-type ${INSTANCE_TYPE} \
-        --iam-instance-profile Name="Ec2-ForStorageGWProfile" \
         --key-name ${KEYNAME} \
         --subnet-id ${SGW_SUBNET1} \
         --security-group-ids ${SGW_SG_ID} \
@@ -1189,7 +1161,7 @@ aws --profile ${PROFILE} \
         --tag-specifications "${TAGJSON}" \
         --monitoring Enabled=true;
 ```
-### (8)-(b) アクティベーションキーの取得
+### (8)-(c) アクティベーションキーの取得
 ファイルゲートウェイから、 アクティベーションキーを取得します。
 (i)アクティベーション用のURL作成
 ```shell
@@ -1216,7 +1188,7 @@ https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/gateway-privat
 
 (ii)アクティベーションキーの取得<br>
 DNSサーバ上から、生成したURLでアクティベーションキーを取得します。(WindowsClientのIEでは上手くアクティベーションできなかったため。理由不明)
-### (8)-(c) ゲートウェイのアクティベーション
+### (8)-(d) ゲートウェイのアクティベーション
 ファイルゲートウェイをアクティベーションします。
 ```shell
 ACTIVATION_KEY=<取得したアクティベーションキーを入力>
@@ -1241,7 +1213,7 @@ aws --profile ${PROFILE} storagegateway describe-gateway-information --gateway-a
 - "VTL"    : VirtualTapeLibrary
 - "FILE_S3": File Gateway
 
-### (8)-(d) ローカルディスク設定
+### (8)-(e) ローカルディスク設定
 ```shell
 #ローカルストレージの確認
 GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
@@ -1262,7 +1234,7 @@ aws --profile ${PROFILE} --output text \
 ```
 参照：https://docs.aws.amazon.com/ja_jp/storagegateway/latest/userguide/create-gateway-file.html
 
-### (8)-(e) SMB設定(SMBSecurityStrategy)
+### (8)-(f) SMB設定(SMBSecurityStrategy)
 ```shell
 GATEWAY_ARN=$(aws --profile ${PROFILE} --output text storagegateway list-gateways |awk '/SgPoC-Gateway-1/{ print $4 }')
 
@@ -1271,7 +1243,7 @@ aws --profile ${PROFILE} storagegateway \
         --gateway-arn ${GATEWAY_ARN} \
         --smb-security-strategy MandatoryEncryption
 ```
-### (8)-(f) ゲストアクセス用の SMB ファイル共有を設定
+### (8)-(g) ゲストアクセス用の SMB ファイル共有を設定
 ```shell
 PASSWORD="HogeHoge@"
 aws --profile ${PROFILE} storagegateway \
@@ -1279,7 +1251,7 @@ aws --profile ${PROFILE} storagegateway \
         --gateway-arn ${GATEWAY_ARN} \
         --password ${PASSWORD}
 ```
-### (8)-(g) SMBファイル共有
+### (8)-(h) SMBファイル共有
 ```shell
 #情報取得
 BUCKETARN="arn:aws:s3:::${BUCKET_NAME}" #${BUCKET_NAME}は、バケット作成時に設定した変数
